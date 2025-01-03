@@ -1,5 +1,11 @@
 import random
 import math
+import pygame
+import sys
+import matplotlib.pyplot as plt
+
+pygame.display.init()
+wn = pygame.display.set_mode((800,800))
 
 sigmoid = lambda x: 1 / (1 + math.exp(-x))
 
@@ -12,10 +18,25 @@ class Node:
         self.parent = parent
 
     def activate(self, input_val=None):
+        self.pred = 0
         if input_val is not None:
             self.pred = input_val
         else:
-            self.pred = sigmoid(sum([i.input.pred * i.weight for i in self.connections if not i.disabled]))
+            try:
+                for i in self.connections:
+                    if i is not i.disabled:
+                        try:
+                            self.pred+=i.input.pred*i.weight
+                        except:
+                            i.input.activate()
+                            self.pred+=i.input.pred*i.weight
+                self.pred = sigmoid(self.pred)
+            except Exception as e:
+                print(self.index)
+                print([i.input.index for i in self.connections])
+                print([i.input.pred for i in self.connections])
+                print("ERROR ERROR ERROR ERROR ERROR")
+                raise Exception(f"{self.index} {[i.input.index for i in self.connections]} {[i.input.pred for i in self.connections]}"+str(e))
 
 class Connection:
     def __init__(self, output, innov, inp, disabled=False, weight=None):
@@ -43,7 +64,7 @@ class Network:
         self.pred = []
         adjusted_input = input_size+1
         self.info = [adjusted_input, output_size]
-        self.Nodes = [[Node(i) for i in range(self.info[0])], [Node(self.info[0] + j) for j in range(output_size)], []]
+        self.Nodes = [[Node(i,type="I") for i in range(self.info[0])], [Node(self.info[0] + j,type="O") for j in range(output_size)], []]
         self.Connections = []
         self.fitness = None
 
@@ -54,6 +75,7 @@ class Network:
                 self.Connections.append(connection)
 
     def activate(self, input_vals):
+
         if len(input_vals) != self.info[0]-1:
             raise ValueError("Incorrect Input Size")
         
@@ -65,6 +87,7 @@ class Network:
 
         for node in self.Nodes[2]:
             node.activate()
+
 
         for node in self.Nodes[1]:
             node.activate()
@@ -81,15 +104,18 @@ class Network:
         doomed.disabled = True
 
         new_node_index = self.info[0] + self.info[1] + len(self.Nodes[2])
-        new_node = Node(new_node_index)
+        new_node = Node(new_node_index,connections=[])
         self.Nodes[2].append(new_node)
 
         self.add_connection(doomed.input, new_node, innov,weight = 1)
         self.add_connection(new_node, doomed.output, innov,weight = doomed.weight)
 
-    def incheck(self,list):
-        return self in list
+        # if doomed.output.type == "H":
+        #     self.Nodes[2].pop(self.Nodes[2].index(new_node))
+        #     self.Nodes[2].insert(self.Nodes[2].index(doomed.output),new_node)
+
     def mutate_weight(self):
+        #CHANGE TO ADD 90% PERTURBANCE ChaNcE
         for i in self.Nodes[1]:
             for j in i.connections:
                 if random.random()>0.1:
@@ -112,17 +138,24 @@ class Network:
             case 1:
                 self.add_node(innov)
             case 2:
-                if len(self.Nodes[2]) > 0:
-                    indexer = random.randint(0,1)
+                try:
+                    indexer = random.randint(0,2) if len(self.Nodes[2]) > 1 else random.randint(0,1)
                     chosen = random.choice(self.Nodes[2])
                     if indexer == 0:
-                        noncon = random.choice([a for a in self.Nodes[0] if a not in [i.input for i in chosen.connections]])
+                        noncon = random.choice([a for a in self.Nodes[0] if a not in [i.output for i in chosen.connections]])
                         self.add_connection(noncon,chosen,innov)     
                     else:
-                        noncon = random.choice([a for a in self.Nodes[1] if chosen not in [i.output for i in a.connections]])
-                        self.add_connection(noncon,chosen,innov)     
-                else:
-                    print("dense net found, redoing")
+                        if indexer == 1:
+                            if random.random > 0.5:
+                                noncon = random.choice([a for a in self.Nodes[1] if chosen not in [i.input for i in a.connections]])
+                                self.add_connection(chosen,noncon,innov)     
+                        if indexer == 2:
+                            noncon = random.choice([a for a in self.Nodes[2] if a not in [i.output for i in chosen.connections] + [i.input for i in chosen.connections]])
+                            self.add_connection(chosen,noncon,innov)
+                            self.Nodes[2].pop(self.Nodes[2].index(chosen))
+                            self.Nodes[2].insert(self.Nodes[2].index(noncon),chosen) 
+                except:
+                    #print("dense net found, redoing")
                     self.mutate(innov,mut=random.choice([0,1]))
 
 def NodeIndexSquared(List,Index):
@@ -139,8 +172,10 @@ def reproduce(pa,pb,innov):
     poc = sorted(other.Connections,key=lambda x: x.innov)
 
     disjoint = [i for i in pfc if i not in poc]
-    common = [random.choice([x,y]) for x,y in zip(pfc,poc) if x.innov==y.innov]
-
+    common = []
+    for i in poc:
+        if i in pfc:
+            common.append(random.choice([i,pfc[pfc.index(i)]]))
     final = disjoint+common
     allnodes = list(set([i.output.index for i in final]+[j.input.index for j in final]))
 
@@ -155,8 +190,10 @@ def reproduce(pa,pb,innov):
     
     DivNodes = [[],[],[]]
     for i in range(pa.info[0]):
+        Nodes[i].type="I"
         DivNodes[0].append(Nodes[i])
     for i in range(pa.info[0],pa.info[1]+pa.info[0]):
+        Nodes[i].type="O"
         DivNodes[1].append(Nodes[i])
     for i in range(pa.info[1]+pa.info[0],len(Nodes)):
         DivNodes[2].append(Nodes[i])
@@ -164,6 +201,14 @@ def reproduce(pa,pb,innov):
     child = Network(pa.info[0]-1,pa.info[1],innov)
     child.Connections = Connections
     child.Nodes = DivNodes
+
+    for i in child.Nodes[2]:
+        for j in i.connections:
+            if j.input.type == "H" and j.disabled == False:
+                if child.Nodes[2].index(j.input) > child.Nodes[2].index(i):
+                    child.Nodes[2].pop(child.Nodes[2].index(j.input))
+                    child.Nodes[2].insert(child.Nodes[2].index(i),j.input)
+
 
     child.mutate(innov)
 
@@ -178,20 +223,113 @@ def print_connections(network):
         print(f"Innov: {connection.innov}")        
         print(f"Disabled: {connection.disabled}")
 
-
 inn = []
 
-a = Network(3,3,inn)
-a.add_node(inn)
+def stress_test():
+    a = Network(3,2,inn)
+    #a.add_node(inn)
+    b = Network(3,2,inn)
+    a.fitness,b.fitness = 1,-1
+    # a.mutate(inn)
+    # b.mutate(inn)
+    innovs = []
+    time = []
+    #CHECK THE 10,000 error
+    for i in range(1): 
+        c,d = reproduce(a,b,inn),reproduce(a,b,inn)
 
-b = Network(3,3,inn)
+        oopsies = [c.Nodes[0],c.Nodes[2],c.Nodes[1]]
+        previous = (a,b)
+        a,b = c,d
+        a.fitness,b.fitness = 1,-1
+        # print([i.index for i in c.Nodes[2]])
+        try:
+            c.activate([1,2,3])
+        except Exception as e:
+            print([a.index for a in oopsies[1]])
+            print_connections(c)
+            print(e)
+            sys.exit()
 
-a.fitness,b.fitness = 1,-1
-c = reproduce(a,b,inn)
-print_connections(c)
-c.activate([1,3,4])
-print(c.pred)
+        innovs.append(len(inn))
+        time.append(i)
+        if i%100 == 0:
+            print("hemlo",i)
+
+    print('done running')
+    # plt.plot(time,innovs)
+    # plt.show()
+    return c,d,previous[0],previous[1],oopsies
+
+
+c,d,a,b,oopsiess = stress_test()
+print("DONE")
+print_connections(b)
+run = True
+
+def get_coords(net,xp,yp):
+    x,y = xp,yp
+    coords = [[],[],[]]
+    oopsies = [net.Nodes[0],net.Nodes[2],net.Nodes[1]]
+    for i in oopsies:
+        x+=100
+        y = 75+((max([len(j) for j in oopsies])-len(i))/2)*75+yp
+        for j in i:
+            coords[oopsies.index(i)].append([x,y])
+            y+=75
+    return coords[0]+coords[2]+coords[1]
+
+def render_net(net,xp,yp,color=(0,0,0),rh = False):
+    oopsies = [net.Nodes[0],net.Nodes[2],net.Nodes[1]]
+    x,y = xp,yp
+    coords = get_coords(net,x,y)
+    for i in range(len(oopsies)):
+        x+=100
+        y = 75+((max([len(j) for j in oopsies])-len(oopsies[i]))/2)*75+yp
+        for j in oopsies[i]:
+            pygame.draw.circle(wn,color,(x,y),25)
+            y+=75
+    for i in net.Connections:
+        try:
+            if i.disabled == False:
+                pygame.draw.line(wn,color,coords[i.input.index],coords[i.output.index],max(abs(int(i.weight*10)),1))
+
+        except Exception as e:
+            print(e,[len(a) for a in net.Nodes])
+    for i in net.Connections:
+        try:
+            if i.disabled == True and rh:
+                pygame.draw.line(wn,(255,0,0),coords[i.input.index],coords[i.output.index],abs(1))
+
+        except Exception as e:
+            print(e,[len(a) for a in net.Nodes])
+    
+uh = Network(3,2,inn)
+uh.add_node(inn)
+rh = False
+while run:
+    wn.fill((255,255,255))
+    render_net(a,-50,0,rh=rh)
+    render_net(b,250,0,color=(255,125,255),rh=rh)
+    render_net(c,200,250,color=(125,125,0),rh=rh)
+    pygame.display.flip()
+    c.activate([1,3,4])
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            pygame.quit()
+            run = False
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_SPACE:
+                print("CHILD MADE WOO")
+                c,d = reproduce(a,b,inn),reproduce(a,b,inn)
+                oopsies = [c.Nodes[0],c.Nodes[2],c.Nodes[1]]
+                previous = (a,b)
+                a,b = c,d
+                a.fitness,b.fitness = 1,-1
+                print_connections(b)
+            if event.key == pygame.K_f:
+                rh = not rh
+
 
 #TODO: ADD FUNCTION TO CHECK FOR DENSE NETS (or just use try catch lol)
 #TODO 2 Electric Bogaloo: ADD RECURSIVE NETWORK FUNCTIONALITY TO ACTIVATION AND MUTATION
-#TODO 3: Add Bias Node
